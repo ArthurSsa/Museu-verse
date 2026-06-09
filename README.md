@@ -1,57 +1,85 @@
-# ExpoVerse Template
+# MuseuVerse
 
-## Sobre o desafio
-Template oficial do desafio ExpoVerse do Hackathon Web3 RESTIC 29.
+Museu virtual imersivo em 3D que preserva digitalmente o acervo perdido do **Museu Nacional do Rio de Janeiro** (incêndio de 2018). O visitante percorre, em primeira pessoa e direto no navegador, quatro peças emblemáticas que se perderam — e, ao final, pode resgatar um certificado de visita como NFT.
+
+🎮 **Jogue no navegador:** https://arthurssa.itch.io/museuverse
+
+> Projeto do desafio **ExpoVerse** — Hackathon Web3 RESTIC 29.
+
+## Sobre o projeto
+
+Em setembro de 2018, um incêndio destruiu cerca de 85% do acervo do Museu Nacional do Rio de Janeiro. O MuseuVerse recria, em um ambiente 3D navegável, quatro peças perdidas — preservando sua memória e tornando-a acessível a qualquer pessoa, em qualquer lugar.
+
+As quatro peças:
+- **Sarcófago de Sha-Amun-em-su** — sarcófago egípcio lacrado há ~2.800 anos.
+- **Trono de Adandozan** — trono do Reino do Daomé, presente diplomático ao Brasil no séc. XIX.
+- **Meteorito de Bendegó** — maior meteorito achado no Brasil; metálico, resistiu ao fogo.
+- **Luzia** — o fóssil humano mais antigo das Américas (~11.500 anos).
 
 ## Objetivo
-Construir experiências virtuais imersivas, navegáveis e interativas utilizando tecnologias XR, WebGL ou ambientes 3D.
 
-## Exemplos de aplicação
-- Museu virtual
-- Loja imersiva
-- Feira virtual
-- Tour 3D
-- Galeria digital
-- Espaço educacional
-- Experiência gamificada
+Transformar a preservação de um patrimônio perdido em uma experiência imersiva e participativa: um museu da memória, navegável no navegador, com um certificado de visita registrado on-chain.
 
-## Tecnologias sugeridas
-- Three.js
-- React Three Fiber
-- Babylon.js
-- A-Frame
-- Unity WebGL
-- Blender
-- WebXR
-- Next.js
+## A experiência
+
+O visitante digita o nome e entra no museu. O ambiente começa escuro e a iluminação guia o percurso, peça por peça. Ao se aproximar de uma peça e pressionar **E**, abre-se um painel curatorial com o texto histórico e uma narração em áudio. Um contador acompanha o progresso; visitadas as quatro peças, o certificado de visita é emitido, com a opção de resgate como NFT.
+
+## Tecnologias
+
+- **Unity 2022.3.62f3 LTS** (Built-in Render Pipeline) → build **WebGL**
+- Navegação em primeira pessoa + interação por **raycast**
+- Narração de áudio gerada com **ElevenLabs**
+- **Blockchain:** contrato **ERC-721** (Solidity) na rede **Ethereum Sepolia** (testnet)
+- **Hospedagem:** itch.io (navegador)
 
 ## Estrutura
-/src
-/public
-/assets
-/docs
-/scenes
-/models
-/textures
+
+```
+museuverse-unity/   — projeto Unity: a experiência imersiva principal (cenas, scripts, modelos e texturas dentro de Assets/)
+Extras/             — módulos complementares do projeto:
+    backend/        — módulo de backend do projeto
+    frontend/       — interface web de resgate do certificado NFT (hospedada no Netlify)
+    smart-contract/ — contrato do certificado NFT (Solidity / Hardhat)
+    docs/           — vídeo-pitch, slides e materiais
+```
+
+Além da experiência principal desenvolvida em **Unity** (`museuverse-unity/`), o repositório reúne em **`Extras/`** todos os módulos complementares do projeto: **backend**, **frontend**, **smart-contract** e **documentação**.
+
+> O build WebGL (pasta `Builds/`) e o modelo 3D do saguão (`.fbx`, acima de 100 MB) não são versionados no repositório — a versão jogável roda no itch.io.
 
 ## Como executar
 
-### Instalar dependências
-```bash
-npm install
-```
+**Jogar (recomendado):** acesse **https://arthurssa.itch.io/museuverse** em qualquer navegador.
 
-### Rodar aplicação
-```bash
-npm run dev
-```
+**Rodar localmente (Unity):**
+1. Abra a pasta `museuverse-unity/` no **Unity 2022.3.62f3 LTS** (com suporte a build WebGL).
+2. Abra a cena `Assets/_Project/Scenes/02_Museum`.
+3. Pressione **Play** (WASD + mouse para andar e olhar; **E** para interagir com as peças).
+
+## Web3 — Certificado NFT
+
+Ao concluir a visita, o jogador recebe um certificado resgatável como NFT na **Ethereum Sepolia** (testnet), via contrato **ERC-721**. O resgate é feito por um link externo (página de resgate), fora da aplicação Unity.
+
+- **Endereço do contrato:** `0x794958920a4e39f2349d653526e8ee9c48b9592c` ([ver na Sepolia Etherscan](https://sepolia.etherscan.io/address/0x794958920a4e39f2349d653526e8ee9c48b9592c))
+- **Link de resgate:** https://museu-verse.netlify.app/
 
 ## Requisitos mínimos
-- Ambiente navegável
-- Interação básica
-- Fluxo funcional
-- README funcional
-- Vídeo-pitch
+
+- ✅ **Ambiente navegável** — museu 3D explorável em primeira pessoa
+- ✅ **Interação básica** — a tecla **E** abre os painéis curatoriais das peças
+- ✅ **Fluxo funcional** — boas-vindas → exploração → certificado (4/4)
+- ✅ **README funcional** — este documento
+- ⬜ **Vídeo-pitch** — _(adicionar link do YouTube)_
 
 ## Equipe
-Adicionar integrantes aqui.
+
+- **Arthur Santos Sampaio** — Desenvolvedor Unity
+- **Ricardo Augusto Belo da Silva** — Modelador 3D (Blender)
+- **Anthony Davi de Sousa Araujo** — Desenvolvedor Fullstack (Blockchain / UI/UX)
+- **Guilherme Pessoa Marinho** — Desenvolvedor Blockchain / Smart Contracts
+
+## Uso de Inteligência Artificial
+
+Conforme as regras do hackathon, declaramos o uso de ferramentas de IA no projeto:
+- **Claude (Anthropic)** — apoio na escrita e revisão de código (C#), na configuração do projeto Unity e na redação da documentação.
+- **ElevenLabs** — geração das narrações em áudio das peças.
