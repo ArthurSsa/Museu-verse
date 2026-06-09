@@ -111,7 +111,6 @@ function Certificate({ name }: { name: string }) {
       <div className="cert-for">
         — em nome de <b>{name || "visitante"}</b> —
       </div>
-      <div className="cert-meta">NFT · ERC-721 · ETHEREUM SEPOLIA</div>
     </div>
   );
 }
