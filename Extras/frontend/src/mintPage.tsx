@@ -2,7 +2,18 @@ import { useState, useEffect, useCallback } from "react";
 import { ethers } from "ethers";
 
 // ─── Config ────────────────────────────────────────────────────────────────────
+// URL do backend (Railway). Pode sobrescrever no build com VITE_BACKEND_URL.
+const BACKEND_URL =
+  (import.meta.env.VITE_BACKEND_URL as string | undefined) ||
+  "https://museu-verse-production.up.railway.app";
+
 const CONTRACT_ADDRESS = "0x794958920a4e39f2349d653526e8ee9c48b9592c";
+
+// Precisa ser idêntica à mensagem que o backend espera no /api/auth/login
+const LOGIN_MESSAGE = "Login MuseuVerse";
+
+// IDs das peças — precisam bater com VALID_PIECES do backend
+const PIECES = ["piece1", "piece2", "piece3", "piece4"];
 
 const ABI = [
   "function mintNFT(address to, string visitorName, uint256 expiration, bytes signature)",
@@ -13,7 +24,7 @@ const SEPOLIA_CHAIN_ID = "0xaa36a7"; // 11155111
 const SEPOLIA_PARAMS = {
   chainId: SEPOLIA_CHAIN_ID,
   chainName: "Sepolia",
-  rpcUrls: ["https://rpc.sepolia.org"],
+  rpcUrls: ["https://ethereum-sepolia-rpc.publicnode.com"],
   nativeCurrency: { name: "SepoliaETH", symbol: "ETH", decimals: 18 },
   blockExplorerUrls: ["https://sepolia.etherscan.io"],
 };
@@ -33,6 +44,38 @@ declare global {
 
 function short(addr: string) {
   return addr.slice(0, 6) + "…" + addr.slice(-4);
+}
+
+// Chamada genérica ao backend
+async function api<T>(
+  path: string,
+  method: string,
+  token: string | null,
+  body?: unknown
+): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(BACKEND_URL + path, {
+      method,
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: "Bearer " + token } : {}),
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch {
+    throw new Error(
+      "Não foi possível falar com o servidor. Confira se o backend está no ar e com CORS liberado."
+    );
+  }
+  let data: { error?: string } = {};
+  try {
+    data = await res.json();
+  } catch {
+    /* resposta sem corpo JSON */
+  }
+  if (!res.ok) throw new Error(data?.error || `Erro ${res.status} em ${path}`);
+  return data as T;
 }
 
 // ─── Sub-components ────────────────────────────────────────────────────────────
@@ -76,23 +119,18 @@ function Certificate({ name }: { name: string }) {
 // ─── Main component ────────────────────────────────────────────────────────────
 
 export default function MintPage() {
-  // URL params
-  const params = new URLSearchParams(window.location.search);
-  const signature = params.get("signature") ?? "";
-  const expiration = params.get("expiration") ?? "";
-  const visitorName = params.get("visitorName") ?? "";
-  const hasParams = Boolean(signature && expiration && visitorName);
-
   // Wallet state
   const [account, setAccount] = useState<string | null>(null);
   const [onSepolia, setOnSepolia] = useState(false);
 
-  // UI state
+  // Form / flow state
+  const [name, setName] = useState("");
   const [statusText, setStatusText] = useState("Carteira não conectada");
   const [statusKind, setStatusKind] = useState<StatusKind>("idle");
   const [resultHtml, setResultHtml] = useState("");
   const [resultKind, setResultKind] = useState<ResultKind>(null);
   const [claiming, setClaiming] = useState(false);
+  const [claimStep, setClaimStep] = useState("Resgatando…");
 
   const setStatus = useCallback((text: string, kind: StatusKind = "idle") => {
     setStatusText(text);
@@ -110,8 +148,7 @@ export default function MintPage() {
       const chainId = (await window.ethereum.request({
         method: "eth_chainId",
       })) as string;
-      const isSepolia =
-        chainId.toLowerCase() === SEPOLIA_CHAIN_ID.toLowerCase();
+      const isSepolia = chainId.toLowerCase() === SEPOLIA_CHAIN_ID.toLowerCase();
       setOnSepolia(isSepolia);
 
       if (currentAccount) {
@@ -128,7 +165,7 @@ export default function MintPage() {
     [setStatus]
   );
 
-  // Attach MetaMask listeners once
+  // Listeners do MetaMask
   useEffect(() => {
     if (!window.ethereum?.on) return;
 
@@ -195,11 +232,13 @@ export default function MintPage() {
   }
 
   async function claim() {
-    if (!hasParams) {
-      showResult(
-        "⚠️ Parâmetros de mint ausentes. Volte ao jogo e complete a visita.",
-        "error"
-      );
+    const visitorName = name.trim();
+    if (!visitorName) {
+      showResult("Digite seu nome para o certificado.", "error");
+      return;
+    }
+    if (visitorName.length >= 35) {
+      showResult("O nome deve ter menos de 35 caracteres.", "error");
       return;
     }
 
@@ -210,13 +249,39 @@ export default function MintPage() {
     try {
       const provider = new ethers.BrowserProvider(window.ethereum!);
       const signer = await provider.getSigner();
-      const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
 
+      // 1) Login — assina a mensagem e recebe o token JWT
+      setClaimStep("Faça login: assine na carteira…");
+      const loginSig = await signer.signMessage(LOGIN_MESSAGE);
+      const { token } = await api<{ token: string }>(
+        "/api/auth/login",
+        "POST",
+        null,
+        { walletAddress: account, message: LOGIN_MESSAGE, signature: loginSig }
+      );
+
+      // 2) Visitas — registra as peças do museu no backend
+      setClaimStep("Registrando sua visita…");
+      for (const pieceId of PIECES) {
+        await api("/api/visit", "POST", token, { pieceId });
+      }
+
+      // 3) Comprovante — backend valida a visita e assina o voucher (EIP-712)
+      setClaimStep("Gerando seu comprovante…");
+      const mint = await api<{
+        signature: string;
+        expiration: string;
+        visitorName: string;
+      }>("/api/mint", "POST", token, { visitorName });
+
+      // 4) Mint on-chain — usa exatamente o que o backend assinou
+      setClaimStep("Confirme a transação na carteira…");
+      const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
       const tx = await contract.mintNFT(
         account,
-        visitorName,
-        BigInt(expiration),
-        signature
+        mint.visitorName,
+        BigInt(mint.expiration),
+        mint.signature
       );
 
       showResult(
@@ -239,7 +304,7 @@ export default function MintPage() {
     }
   }
 
-  const canClaim = Boolean(account && onSepolia && hasParams && !claiming);
+  const canClaim = Boolean(account && onSepolia && !claiming);
 
   return (
     <>
@@ -250,15 +315,21 @@ export default function MintPage() {
         <h1>Resgatar Certificado</h1>
         <p className="sub">Você concluiu a visita. Reivindique seu certificado on-chain.</p>
 
-        <Certificate name={visitorName} />
+        <Certificate name={name} />
 
         <div className="panel">
-          {!hasParams && (
-            <div className="warn-box">
-              ⚠️ Parâmetros de mint não encontrados na URL. Volte ao jogo e
-              complete a visita antes de acessar esta página.
-            </div>
-          )}
+          <div className="field">
+            <label htmlFor="nameInput">Seu nome (vai no certificado · obrigatório)</label>
+            <input
+              id="nameInput"
+              type="text"
+              placeholder="Ex.: Maria"
+              maxLength={34}
+              autoComplete="off"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
+          </div>
 
           <div className={`status ${statusKind}`}>
             <span className="dot" />
@@ -280,7 +351,7 @@ export default function MintPage() {
           <button className="btn-gold" disabled={!canClaim} onClick={claim}>
             {claiming ? (
               <>
-                <Spinner /> Resgatando…
+                <Spinner /> {claimStep}
               </>
             ) : (
               "Resgatar certificado"
@@ -301,7 +372,7 @@ export default function MintPage() {
             MetaMask
           </a>{" "}
           e de um pouco de <b>SepoliaETH de teste</b> (pegue num{" "}
-          <a href="https://sepoliafaucet.com/" target="_blank" rel="noopener">
+          <a href="https://sepolia-faucet.pk910.de/" target="_blank" rel="noopener">
             faucet
           </a>
           ) pra pagar o gas.
@@ -388,11 +459,13 @@ const css = `
 
   .panel { margin-top: 22px; text-align: left; }
 
-  .warn-box {
-    background: rgba(210,113,90,.12); border: 1px solid rgba(210,113,90,.4);
-    border-radius: 10px; padding: 13px 14px; font-size: 13px; color: #eccabf;
-    margin-bottom: 16px; line-height: 1.5;
+  .field { margin-bottom: 14px; }
+  .field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  .field input {
+    width: 100%; padding: 11px 13px; border-radius: 9px; border: 1px solid var(--line);
+    background: #1f1a14; color: var(--cream); font-size: 14px; font-family: inherit;
   }
+  .field input:focus { outline: none; border-color: var(--gold); }
 
   .status {
     font-size: 13px; color: var(--muted); margin: 4px 0 16px;
@@ -426,6 +499,13 @@ const css = `
   .result.success { background: rgba(123,178,116,.12); border: 1px solid rgba(123,178,116,.4); color: #cfe5ca; }
   .result.error   { background: rgba(210,113,90,.12);  border: 1px solid rgba(210,113,90,.4);  color: #eccabf; }
   .result a { color: var(--goldb); font-weight: 600; }
+
+  .spinner-light {
+    display: inline-block; width: 13px; height: 13px;
+    border: 2px solid rgba(207,229,202,.3); border-top-color: #cfe5ca;
+    border-radius: 50%; animation: spin .7s linear infinite;
+    vertical-align: -2px; margin-right: 7px;
+  }
 
   .help { margin-top: 22px; font-size: 12.5px; color: var(--muted); line-height: 1.6; text-align: center; }
   .help a { color: var(--gold); }
