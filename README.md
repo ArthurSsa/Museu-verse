@@ -32,14 +32,14 @@ O visitante digita o nome e entra no museu. O ambiente começa escuro e a ilumin
 - **Blockchain:** contrato **ERC-721** (Solidity / Hardhat) na rede **Ethereum Sepolia** (testnet)
 - **Backend (Node / Express):** valida a visita e assina cada resgate com **assinatura EIP-712** (signer autorizado)
 - **Frontend de resgate:** página web que conecta a carteira e chama o contrato
-- **Hospedagem:** itch.io (experiência Unity) · Netlify (página de resgate)
+- **Hospedagem:** itch.io (experiência Unity) · Netlify (página de resgate) · Railway (backend)
 
 ## Estrutura
 
 ```
 museuverse-unity/   — projeto Unity: a experiência imersiva principal (cenas, scripts, modelos e texturas dentro de Assets/)
 Extras/             — módulos complementares do projeto:
-    backend/        — serviço autorizado que assina os comprovantes de mint (EIP-712) do certificado
+    backend/        — serviço autorizado que assina os comprovantes de mint (EIP-712) do certificado (hospedado no Railway)
     frontend/       — interface web de resgate do certificado NFT (hospedada no Netlify)
     smart-contract/ — contrato do certificado NFT (Solidity / Hardhat)
     docs/           — vídeo-pitch, slides e materiais
