@@ -136,7 +136,7 @@ namespace MuseuVerse.UI
 
             if (textoContagem != null)
             {
-                textoContagem.text = $"{totalPecas}/{totalPecas} peças visitadas";
+                textoContagem.text = $"Visitou as {totalPecas}/{totalPecas} peças do MuseuVerse";
             }
 
             // SetInputEnabled(false) tambem libera o cursor para clicar na UI.
