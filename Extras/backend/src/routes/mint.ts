@@ -2,6 +2,7 @@ import {Router, Request, Response} from 'express';
 import jwt from 'jsonwebtoken';
 import {verifyMessage} from 'viem';
 import {signMintRequest} from '../services/signer';
+import {apiKeyMiddleware} from '../middleware/apiKey';
 
 const router = Router();
 
@@ -100,6 +101,43 @@ router.post('/mint', authMiddleware, async (req: Request, res: Response) => {
         console.error('Erro ao gerar assinatura de mintagem:', err);
         return res.status(500).json({error: 'erro ao gerar assinatura de mintagem'});
     }
+});
+
+router.post('/generate-claim-url', apiKeyMiddleware, async (req: Request, res: Response) => {
+  const { visitorName, walletAddress } = req.body;
+
+  if(!walletAddress) {
+    return res.status(400).json({ error: 'endereco de carteira é obrigatório' });
+  }
+
+  if (!visitorName || visitorName.trim().length === 0) {
+    return res.status(400).json({ error: 'nome do visitante é obrigatório' });
+  }
+
+  if (visitorName.length >= 35) {
+    return res.status(400).json({ error: 'nome deve ter menos de 35 caracteres' });
+  }
+
+  const visited = visitedPieces.get(walletAddress);
+  if (!visited || visited.size < REQUIRED_PIECES) {
+    return res.status(403).json({ error: 'visite todas as peças primeiro' });
+  }
+
+  try {
+    const expiration = BigInt(Math.floor(Date.now() / 1000) + 3600);
+    const signature = await signMintRequest(walletAddress as `0x${string}`, visitorName.trim(), expiration);
+
+    visitedPieces.delete(walletAddress);
+
+    const claimUrl = `${process.env.CLAIM_PAGE_URL}?`
+      + `signature=${signature}`
+      + `&expiration=${expiration.toString()}`
+      + `&visitorName=${encodeURIComponent(visitorName.trim())}`;
+
+    return res.json({ url: claimUrl });
+  } catch (err) {
+    return res.status(500).json({ error: 'erro ao gerar URL de claim' });
+  }
 });
 
 export default router;
