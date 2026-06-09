@@ -8,6 +8,7 @@
     "verbatimModuleSyntax": false,
     "outDir": "./dist",
     "rootDir": "./src",
-    "strict": true
+    "strict": true,
+    "skipLibCheck": true
   }
 }
