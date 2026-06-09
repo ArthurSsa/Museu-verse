@@ -1,6 +1,7 @@
 import "dotenv/config";
 import express from "express";
 import mintRouter from "./routes/mint";
+import cors from "cors";
 
 const requiredEnvVars = ["SIGNER_PRIVATE_KEY", "CONTRACT_ADDRESS", "JWT_SECRET"];
 
@@ -11,6 +12,7 @@ for (const envVar of requiredEnvVars) {
     }
 }
 const app = express();
+app.use(cors());
 const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
