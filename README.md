@@ -81,5 +81,5 @@ Ao concluir a visita, o jogador recebe um certificado resgatável como NFT na **
 ## Uso de Inteligência Artificial
 
 Conforme as regras do hackathon, declaramos o uso de ferramentas de IA no projeto:
-- **Claude (Anthropic)** — apoio na escrita e revisão de código (C#), na configuração do projeto Unity e na redação da documentação.
+- **Claude (Anthropic)** — apoio na escrita e revisão de código (C#), Assistência na configuração do projeto Unity e na redação da documentação.
 - **ElevenLabs** — geração das narrações em áudio das peças.
