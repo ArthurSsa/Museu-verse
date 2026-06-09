@@ -96,8 +96,8 @@
 
     <div class="panel">
       <div class="field">
-        <label for="nameInput">Seu nome (opcional, só pro certificado na tela)</label>
-        <input id="nameInput" type="text" placeholder="Ex.: Maria" maxlength="32" autocomplete="off" />
+        <label for="nameInput">Seu nome (vai no certificado · obrigatório)</label>
+        <input id="nameInput" type="text" placeholder="Ex.: Maria" maxlength="34" autocomplete="off" />
       </div>
 
       <div class="status" id="status"><span class="dot"></span>Carteira não conectada</div>
@@ -121,29 +121,25 @@
 
 <script type="module">
 /* ===================================================================
-   CONFIG — dados do contrato
+   CONFIG
    =================================================================== */
 const CONFIG = {
-  // Contrato ERC-721 implantado na ETHEREUM SEPOLIA (testnet):
+  // >>> URL do backend hospedado (servidor Express), SEM barra no final. <<<
+  // Ex. de produção: "https://museuverse-backend.onrender.com"
+  // Em teste local na sua máquina: "http://localhost:3000"
+  // ATENÇÃO: pra funcionar no Netlify, troque por uma URL PÚBLICA (localhost só funciona na sua máquina).
+  backendUrl: "http://localhost:3000",
+
+  // Contrato ERC-721 (NFTmuseu) implantado na ETHEREUM SEPOLIA:
   contractAddress: "0x794958920a4e39f2349d653526e8ee9c48b9592c",
 
-  // Nome da função de resgate/mint:
-  mintFunctionName: "mintNFT",
+  // Mensagem de login — precisa ser IDÊNTICA à que o backend espera:
+  loginMessage: "Login MuseuVerse",
 
-  // ⚠️ CONFIRMAR a assinatura de mintNFT:
-  //   - mintNFT()                       -> mintTakesRecipient: false
-  //   - mintNFT(address to)             -> mintTakesRecipient: true
-  //   - mintNFT(address, string uri...) -> use abiOverride + ajustar os args na função claim()
-  mintTakesRecipient: false,
-
-  mintIsPayable: false,
-  priceInEth: "0",
-
-  // Se mintNFT tiver outros argumentos (ex.: tokenURI), cole a ABI completa aqui (array). Senão null.
-  abiOverride: null,
+  // IDs das peças — precisam bater com VALID_PIECES do backend:
+  pieces: ["piece1", "piece2", "piece3", "piece4"],
 };
 
-// Rede Ethereum Sepolia (testnet)
 const SEPOLIA = {
   chainId: "0xaa36a7", // 11155111
   chainName: "Sepolia",
@@ -151,25 +147,24 @@ const SEPOLIA = {
   nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
   blockExplorerUrls: ["https://sepolia.etherscan.io"],
 };
+
+// Assinatura REAL da função do contrato NFTmuseu:
+const ABI = [
+  "function mintNFT(address to, string visitorName, uint256 expiration, bytes signature)"
+];
 /* =================================================================== */
 
 import { ethers } from "https://cdn.jsdelivr.net/npm/ethers@6.13.4/+esm";
 
 const $ = (id) => document.getElementById(id);
-const statusEl = $("status"), resultEl = $("result");
+const statusEl = $("status"), resultEl = $("result"), nameInput = $("nameInput");
 const btnConnect = $("btnConnect"), btnSwitch = $("btnSwitch"), btnClaim = $("btnClaim");
 let account = null, onSepolia = false;
 
-$("nameInput").addEventListener("input", (e) => {
+nameInput.addEventListener("input", (e) => {
   $("certName").textContent = e.target.value.trim() || "visitante";
 });
 
-function abi(){
-  if (CONFIG.abiOverride) return CONFIG.abiOverride;
-  const args = CONFIG.mintTakesRecipient ? "address to" : "";
-  const pay = CONFIG.mintIsPayable ? " payable" : "";
-  return [`function ${CONFIG.mintFunctionName}(${args})${pay}`];
-}
 const short = (a) => a.slice(0,6) + "…" + a.slice(-4);
 
 function setStatus(text, kind){
@@ -180,10 +175,31 @@ function showResult(html, kind){
   resultEl.className = "result show " + kind;
   resultEl.innerHTML = html;
 }
+function setClaimLoading(text){
+  btnClaim.innerHTML = `<span class="spinner"></span>${text}`;
+}
 function refreshButtons(){
   btnConnect.style.display = account ? "none" : "block";
   btnSwitch.style.display = (account && !onSepolia) ? "block" : "none";
   btnClaim.disabled = !(account && onSepolia);
+}
+
+// Chamada genérica ao backend
+async function api(path, method, token, body){
+  let res;
+  try{
+    res = await fetch(CONFIG.backendUrl + path, {
+      method,
+      headers: Object.assign({ "Content-Type": "application/json" }, token ? { Authorization: "Bearer " + token } : {}),
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  }catch(e){
+    throw new Error("Não foi possível falar com o servidor (" + CONFIG.backendUrl + "). Confira se o backend está no ar e com CORS liberado.");
+  }
+  let data = {};
+  try{ data = await res.json(); }catch{}
+  if (!res.ok) throw new Error(data.error || ("Erro " + res.status + " em " + path));
+  return data;
 }
 
 async function detectNetwork(){
@@ -216,32 +232,46 @@ async function switchToSepolia(){
     await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: SEPOLIA.chainId }] });
   }catch(err){
     if (err.code === 4902){
-      try{
-        await window.ethereum.request({ method: "wallet_addEthereumChain", params: [SEPOLIA] });
-      }catch(e){ showResult("Não foi possível adicionar a rede Sepolia.", "error"); return; }
+      try{ await window.ethereum.request({ method: "wallet_addEthereumChain", params: [SEPOLIA] }); }
+      catch(e){ showResult("Não foi possível adicionar a rede Sepolia.", "error"); return; }
     }else{ showResult("Não foi possível trocar de rede.", "error"); return; }
   }
   await detectNetwork();
 }
 
 async function claim(){
-  if (CONFIG.contractAddress.startsWith("0xCOLOQUE")){
-    showResult("⚠️ Falta configurar o endereço do contrato (CONFIG.contractAddress).", "error");
-    return;
-  }
+  const name = nameInput.value.trim();
+  if (!name){ showResult("Digite seu nome para o certificado.", "error"); nameInput.focus(); return; }
+  if (name.length >= 35){ showResult("O nome deve ter menos de 35 caracteres.", "error"); return; }
+
   btnClaim.disabled = true;
-  btnClaim.innerHTML = '<span class="spinner"></span>Resgatando…';
   resultEl.className = "result";
   try{
     const provider = new ethers.BrowserProvider(window.ethereum);
     const signer = await provider.getSigner();
-    const contract = new ethers.Contract(CONFIG.contractAddress, abi(), signer);
 
-    const callArgs = CONFIG.mintTakesRecipient ? [account] : [];
-    if (CONFIG.mintIsPayable && CONFIG.priceInEth !== "0"){
-      callArgs.push({ value: ethers.parseEther(CONFIG.priceInEth) });
+    // 1) LOGIN — assina a mensagem e recebe o token JWT
+    setClaimLoading("Faça login: assine na carteira…");
+    const loginSig = await signer.signMessage(CONFIG.loginMessage);
+    const { token } = await api("/api/auth/login", "POST", null, {
+      walletAddress: account, message: CONFIG.loginMessage, signature: loginSig
+    });
+
+    // 2) VISITAS — registra as peças do museu no backend
+    setClaimLoading("Registrando sua visita…");
+    for (const pieceId of CONFIG.pieces){
+      await api("/api/visit", "POST", token, { pieceId });
     }
-    const tx = await contract[CONFIG.mintFunctionName](...callArgs);
+
+    // 3) COMPROVANTE — backend assina o voucher de mint (EIP-712)
+    setClaimLoading("Gerando seu comprovante…");
+    const mint = await api("/api/mint", "POST", token, { visitorName: name });
+
+    // 4) MINT on-chain — usa exatamente o que o backend assinou
+    setClaimLoading("Confirme a transação na carteira…");
+    const contract = new ethers.Contract(CONFIG.contractAddress, ABI, signer);
+    const tx = await contract.mintNFT(account, mint.visitorName, BigInt(mint.expiration), mint.signature);
+
     showResult('<span class="spinner" style="border-top-color:#cfe5ca;border-color:rgba(207,229,202,.3)"></span>Transação enviada, aguardando confirmação…', "success");
     const receipt = await tx.wait();
     const url = `${SEPOLIA.blockExplorerUrls[0]}/tx/${receipt.hash}`;
