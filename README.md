@@ -29,15 +29,17 @@ O visitante digita o nome e entra no museu. O ambiente começa escuro e a ilumin
 - **Unity 2022.3.62f3 LTS** (Built-in Render Pipeline) → build **WebGL**
 - Navegação em primeira pessoa + interação por **raycast**
 - Narração de áudio gerada com **ElevenLabs**
-- **Blockchain:** contrato **ERC-721** (Solidity) na rede **Ethereum Sepolia** (testnet)
-- **Hospedagem:** itch.io (navegador)
+- **Blockchain:** contrato **ERC-721** (Solidity / Hardhat) na rede **Ethereum Sepolia** (testnet)
+- **Backend (Node / Express):** valida a visita e assina cada resgate com **assinatura EIP-712** (signer autorizado)
+- **Frontend de resgate:** página web que conecta a carteira e chama o contrato
+- **Hospedagem:** itch.io (experiência Unity) · Netlify (página de resgate)
 
 ## Estrutura
 
 ```
 museuverse-unity/   — projeto Unity: a experiência imersiva principal (cenas, scripts, modelos e texturas dentro de Assets/)
 Extras/             — módulos complementares do projeto:
-    backend/        — módulo de backend do projeto
+    backend/        — serviço autorizado que assina os comprovantes de mint (EIP-712) do certificado
     frontend/       — interface web de resgate do certificado NFT (hospedada no Netlify)
     smart-contract/ — contrato do certificado NFT (Solidity / Hardhat)
     docs/           — vídeo-pitch, slides e materiais
@@ -58,7 +60,7 @@ Além da experiência principal desenvolvida em **Unity** (`museuverse-unity/`),
 
 ## Web3 — Certificado NFT
 
-Ao concluir a visita, o jogador recebe um certificado resgatável como NFT na **Ethereum Sepolia** (testnet), via contrato **ERC-721**. O resgate é feito por um link externo (página de resgate), fora da aplicação Unity.
+Ao concluir a visita, o jogador recebe um certificado resgatável como NFT na **Ethereum Sepolia** (testnet), via contrato **ERC-721**. O resgate acontece em uma **página web** (fora da aplicação Unity): o visitante conecta a carteira, o **backend valida a visita e assina um voucher EIP-712**, e a página chama o `mintNFT` do contrato com essa assinatura — garantindo que só quem concluiu a visita consiga mintar o certificado.
 
 - **Endereço do contrato:** `0x794958920a4e39f2349d653526e8ee9c48b9592c` ([ver na Sepolia Etherscan](https://sepolia.etherscan.io/address/0x794958920a4e39f2349d653526e8ee9c48b9592c))
 - **Link de resgate:** https://museu-verse.netlify.app/
@@ -81,5 +83,5 @@ Ao concluir a visita, o jogador recebe um certificado resgatável como NFT na **
 ## Uso de Inteligência Artificial
 
 Conforme as regras do hackathon, declaramos o uso de ferramentas de IA no projeto:
-- **Claude (Anthropic)** — apoio na escrita e revisão de código (C#), Assistência na configuração do projeto Unity e na redação da documentação.
+- **Claude (Anthropic)** — apoio na escrita e revisão de código (C#), na configuração do projeto Unity e na redação da documentação.
 - **ElevenLabs** — geração das narrações em áudio das peças.
