@@ -17,10 +17,14 @@ const SEPOLIA_PARAMS = {
   nativeCurrency: { name: "SepoliaETH", symbol: "ETH", decimals: 18 },
   blockExplorerUrls: ["https://sepolia.etherscan.io"],
 };
+
+// URL do backend — troque para a URL real quando deployar
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL ?? "https://SEU-BACKEND.com";
 // ───────────────────────────────────────────────────────────────────────────────
 
 type StatusKind = "idle" | "ok" | "warn";
 type ResultKind = "success" | "error" | null;
+type Phase = "connect" | "signing" | "minting" | "done";
 
 declare global {
   interface Window {
@@ -76,15 +80,14 @@ function Certificate({ name }: { name: string }) {
 // ─── Main component ────────────────────────────────────────────────────────────
 
 export default function MintPage() {
-  // URL params
+  // Parâmetros vindos da URL gerada pelo Unity
   const params = new URLSearchParams(window.location.search);
-  const signature = params.get("signature") ?? "";
-  const expiration = params.get("expiration") ?? "";
-  const visitorName = params.get("visitorName") ?? "";
-  const hasParams = Boolean(signature && expiration && visitorName);
+  const visitToken   = params.get("visitToken")   ?? "";
+  const visitorName  = params.get("visitorName")  ?? "";
+  const hasParams    = Boolean(visitToken && visitorName);
 
   // Wallet state
-  const [account, setAccount] = useState<string | null>(null);
+  const [account,   setAccount]   = useState<string | null>(null);
   const [onSepolia, setOnSepolia] = useState(false);
 
   // UI state
@@ -92,7 +95,9 @@ export default function MintPage() {
   const [statusKind, setStatusKind] = useState<StatusKind>("idle");
   const [resultHtml, setResultHtml] = useState("");
   const [resultKind, setResultKind] = useState<ResultKind>(null);
-  const [claiming, setClaiming] = useState(false);
+  const [phase,      setPhase]      = useState<Phase>("connect");
+
+  const busy = phase === "signing" || phase === "minting";
 
   const setStatus = useCallback((text: string, kind: StatusKind = "idle") => {
     setStatusText(text);
@@ -107,13 +112,9 @@ export default function MintPage() {
   const detectNetwork = useCallback(
     async (currentAccount: string | null) => {
       if (!window.ethereum) return;
-      const chainId = (await window.ethereum.request({
-        method: "eth_chainId",
-      })) as string;
-      const isSepolia =
-        chainId.toLowerCase() === SEPOLIA_CHAIN_ID.toLowerCase();
+      const chainId = (await window.ethereum.request({ method: "eth_chainId" })) as string;
+      const isSepolia = chainId.toLowerCase() === SEPOLIA_CHAIN_ID.toLowerCase();
       setOnSepolia(isSepolia);
-
       if (currentAccount) {
         if (isSepolia) {
           setStatus(
@@ -128,24 +129,22 @@ export default function MintPage() {
     [setStatus]
   );
 
-  // Attach MetaMask listeners once
+  // Listeners MetaMask
   useEffect(() => {
     if (!window.ethereum?.on) return;
-
     const handleAccounts = (accounts: unknown) => {
       const accts = accounts as string[];
-      const addr = accts[0] ?? null;
+      const addr  = accts[0] ?? null;
       setAccount(addr);
       if (!addr) setStatus("Carteira não conectada");
       detectNetwork(addr);
     };
-
     const handleChain = () => detectNetwork(account);
-
     window.ethereum.on("accountsChanged", handleAccounts);
-    window.ethereum.on("chainChanged", handleChain);
+    window.ethereum.on("chainChanged",    handleChain);
   }, [account, detectNetwork, setStatus]);
 
+  // ─── Conectar carteira ────────────────────────────────────────────────────
   async function connect() {
     if (!window.ethereum) {
       showResult(
@@ -155,10 +154,8 @@ export default function MintPage() {
       return;
     }
     try {
-      const accts = (await window.ethereum.request({
-        method: "eth_requestAccounts",
-      })) as string[];
-      const addr = accts[0];
+      const accts = (await window.ethereum.request({ method: "eth_requestAccounts" })) as string[];
+      const addr  = accts[0];
       setAccount(addr);
       setResultKind(null);
       setResultHtml("");
@@ -168,6 +165,7 @@ export default function MintPage() {
     }
   }
 
+  // ─── Trocar para Sepolia ──────────────────────────────────────────────────
   async function switchToSepolia() {
     try {
       await window.ethereum!.request({
@@ -194,52 +192,80 @@ export default function MintPage() {
     await detectNetwork(account);
   }
 
+  // ─── Claim principal ──────────────────────────────────────────────────────
   async function claim() {
     if (!hasParams) {
-      showResult(
-        "⚠️ Parâmetros de mint ausentes. Volte ao jogo e complete a visita.",
-        "error"
-      );
+      showResult("⚠️ Parâmetros ausentes. Volte ao jogo e complete a visita.", "error");
       return;
     }
+    if (!account) return;
 
-    setClaiming(true);
     setResultKind(null);
     setResultHtml("");
 
     try {
+      // 1. Pedir assinatura ao backend passando walletAddress + visitToken
+      setPhase("signing");
+      showResult("<span class='spinner-inline'></span>Solicitando assinatura ao servidor…", "success");
+
+      const backendRes = await fetch(`${BACKEND_URL}/api/mint`, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          visitToken,
+          walletAddress: account,
+          visitorName,
+        }),
+      });
+
+      if (!backendRes.ok) {
+        const err = await backendRes.json().catch(() => ({}));
+        throw new Error(err.error ?? `Erro ${backendRes.status} do servidor`);
+      }
+
+      const { signature, expiration } = await backendRes.json() as {
+        signature: string;
+        expiration: string;
+      };
+
+      // 2. Chamar o contrato com a assinatura recebida
+      setPhase("minting");
+      showResult("<span class='spinner-inline'></span>Aguardando confirmação na carteira…", "success");
+
       const provider = new ethers.BrowserProvider(window.ethereum!);
-      const signer = await provider.getSigner();
+      const signer   = await provider.getSigner();
       const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
 
-      const tx = await contract.mintNFT(
-        account,
-        visitorName,
-        BigInt(expiration),
-        signature
-      );
+      const tx = await contract.mintNFT(account, visitorName, BigInt(expiration), signature);
 
-      showResult(
-        `<span class="spinner-light"></span>Transação enviada, aguardando confirmação…`,
-        "success"
-      );
+      showResult("<span class='spinner-inline'></span>Transação enviada, aguardando confirmação na blockchain…", "success");
 
       const receipt = await tx.wait();
-      const url = `${SEPOLIA_PARAMS.blockExplorerUrls[0]}/tx/${receipt.hash}`;
+      const url     = `${SEPOLIA_PARAMS.blockExplorerUrls[0]}/tx/${receipt.hash}`;
+
+      setPhase("done");
       showResult(
-        `✓ Certificado resgatado!<br/>Transação: <a href="${url}" target="_blank" rel="noopener">ver no Etherscan ↗</a>`,
+        `✓ Certificado resgatado com sucesso!<br/>
+         <a href="${url}" target="_blank" rel="noopener">Ver transação no Etherscan ↗</a>`,
         "success"
       );
     } catch (err: unknown) {
-      const e = err as { shortMessage?: string; reason?: string; message?: string };
-      const msg = e.shortMessage ?? e.reason ?? e.message ?? "Erro ao resgatar.";
+      setPhase("connect");
+      const e   = err as { shortMessage?: string; reason?: string; message?: string };
+      const msg = e.shortMessage ?? e.reason ?? e.message ?? "Erro desconhecido.";
       showResult("Não foi possível resgatar: " + msg, "error");
-    } finally {
-      setClaiming(false);
     }
   }
 
-  const canClaim = Boolean(account && onSepolia && hasParams && !claiming);
+  const canClaim = Boolean(account && onSepolia && hasParams && !busy && phase !== "done");
+
+  // ─── Label do botão de acordo com a fase ─────────────────────────────────
+  function btnLabel() {
+    if (phase === "signing") return <><Spinner /> Consultando servidor…</>;
+    if (phase === "minting") return <><Spinner /> Resgatando…</>;
+    if (phase === "done")    return "✓ Certificado resgatado";
+    return "Resgatar certificado";
+  }
 
   return (
     <>
@@ -255,7 +281,7 @@ export default function MintPage() {
         <div className="panel">
           {!hasParams && (
             <div className="warn-box">
-              ⚠️ Parâmetros de mint não encontrados na URL. Volte ao jogo e
+              ⚠️ Parâmetros não encontrados na URL. Volte ao jogo e
               complete a visita antes de acessar esta página.
             </div>
           )}
@@ -278,13 +304,7 @@ export default function MintPage() {
           )}
 
           <button className="btn-gold" disabled={!canClaim} onClick={claim}>
-            {claiming ? (
-              <>
-                <Spinner /> Resgatando…
-              </>
-            ) : (
-              "Resgatar certificado"
-            )}
+            {btnLabel()}
           </button>
 
           {resultKind && (
@@ -297,22 +317,14 @@ export default function MintPage() {
 
         <div className="help">
           Precisa do{" "}
-          <a href="https://metamask.io/" target="_blank" rel="noopener">
-            MetaMask
-          </a>{" "}
+          <a href="https://metamask.io/" target="_blank" rel="noopener">MetaMask</a>{" "}
           e de um pouco de <b>SepoliaETH de teste</b> (pegue num{" "}
-          <a href="https://sepoliafaucet.com/" target="_blank" rel="noopener">
-            faucet
-          </a>
+          <a href="https://sepoliafaucet.com/" target="_blank" rel="noopener">faucet</a>
           ) pra pagar o gas.
         </div>
 
         <footer>
-          <a
-            href="https://arthurssa.itch.io/museuverse"
-            target="_blank"
-            rel="noopener"
-          >
+          <a href="https://arthurssa.itch.io/museuverse" target="_blank" rel="noopener">
             ← Voltar ao museu
           </a>
         </footer>
@@ -343,23 +355,15 @@ const css = `
       radial-gradient(900px 500px at 50% 120%, #241f18 0%, rgba(36,31,24,0) 60%),
       var(--bg);
     min-height: 100vh;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    display: flex; align-items: center; justify-content: center;
     padding: 32px 18px;
   }
 
   .wrap { width: 100%; max-width: 540px; text-align: center; }
 
-  .eyebrow {
-    font-size: 12px; letter-spacing: 3px; color: var(--gold);
-    font-weight: 600; text-transform: uppercase; margin-bottom: 6px;
-  }
+  .eyebrow { font-size: 12px; letter-spacing: 3px; color: var(--gold); font-weight: 600; text-transform: uppercase; margin-bottom: 6px; }
 
-  h1 {
-    font-family: 'Playfair Display', Georgia, serif;
-    font-size: 30px; margin: 0 0 4px; color: var(--cream); font-weight: 700;
-  }
+  h1 { font-family: 'Playfair Display', Georgia, serif; font-size: 30px; margin: 0 0 4px; color: var(--cream); font-weight: 700; }
 
   .sub { color: var(--muted); font-size: 15px; margin: 0 0 26px; }
 
@@ -375,16 +379,13 @@ const css = `
     border: 2px solid var(--gold); display: flex; align-items: center;
     justify-content: center; box-shadow: 0 0 0 4px rgba(201,163,90,.12);
   }
-  .seal span {
-    font-family: 'Playfair Display', serif; font-weight: 700;
-    font-size: 22px; color: var(--gold);
-  }
+  .seal span { font-family: 'Playfair Display', serif; font-weight: 700; font-size: 22px; color: var(--gold); }
 
   .cert-label { font-size: 12px; letter-spacing: 2px; color: var(--cream); text-transform: uppercase; margin-bottom: 4px; }
-  .cert-name { font-family: 'Playfair Display', serif; font-size: 30px; color: var(--gold); margin: 2px 0 6px; }
-  .cert-for { font-family: 'Playfair Display', serif; font-style: italic; font-size: 15px; color: var(--muted); margin-bottom: 14px; }
+  .cert-name  { font-family: 'Playfair Display', serif; font-size: 30px; color: var(--gold); margin: 2px 0 6px; }
+  .cert-for   { font-family: 'Playfair Display', serif; font-style: italic; font-size: 15px; color: var(--muted); margin-bottom: 14px; }
   .cert-for b { color: var(--cream); font-style: normal; }
-  .cert-meta { font-size: 11px; letter-spacing: 1px; color: var(--gold); padding-top: 12px; border-top: 1px solid var(--line); }
+  .cert-meta  { font-size: 11px; letter-spacing: 1px; color: var(--gold); padding-top: 12px; border-top: 1px solid var(--line); }
 
   .panel { margin-top: 22px; text-align: left; }
 
@@ -399,11 +400,8 @@ const css = `
     min-height: 20px; text-align: center; display: flex;
     align-items: center; justify-content: center; gap: 7px;
   }
-  .dot {
-    display: inline-block; width: 8px; height: 8px;
-    border-radius: 50%; background: var(--muted); flex-shrink: 0;
-  }
-  .status.ok .dot  { background: var(--ok); }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
+  .status.ok   .dot { background: var(--ok); }
   .status.warn .dot { background: var(--err); }
   .addr { color: var(--cream); font-family: ui-monospace, Menlo, monospace; }
 
@@ -426,6 +424,13 @@ const css = `
   .result.success { background: rgba(123,178,116,.12); border: 1px solid rgba(123,178,116,.4); color: #cfe5ca; }
   .result.error   { background: rgba(210,113,90,.12);  border: 1px solid rgba(210,113,90,.4);  color: #eccabf; }
   .result a { color: var(--goldb); font-weight: 600; }
+
+  .spinner-inline {
+    display: inline-block; width: 11px; height: 11px;
+    border: 2px solid rgba(207,229,202,.3); border-top-color: #cfe5ca;
+    border-radius: 50%; animation: spin .7s linear infinite;
+    vertical-align: -2px; margin-right: 6px;
+  }
 
   .help { margin-top: 22px; font-size: 12.5px; color: var(--muted); line-height: 1.6; text-align: center; }
   .help a { color: var(--gold); }

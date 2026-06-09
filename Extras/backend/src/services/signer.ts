@@ -1,6 +1,6 @@
-import {createWalletClient, http} from 'viem';
+import { createWalletClient, http } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import {sepolia} from 'viem/chains';
+import { sepolia } from 'viem/chains';
 
 const domain = {
     name: 'NFTmuseu',
@@ -11,23 +11,29 @@ const domain = {
 
 const types = {
     MintRequest: [
-        { name: 'to', type: 'address' },
-        { name: 'visitorName', type: 'string' },
-        { name: 'expiration', type: 'uint256' },
+        { name: 'to',          type: 'address' },
+        { name: 'visitorName', type: 'string'  },
+        { name: 'expiration',  type: 'uint256' },
     ],
 } as const;
 
-export async function signMintRequest(to: `0x${string}`, visitorName: string, expiration: bigint): Promise<`0x${string}`> {
-
+export async function signMintRequest(
+    to: `0x${string}`,
+    visitorName: string,
+    expiration: bigint
+): Promise<`0x${string}`> {
     const account = privateKeyToAccount(process.env.SIGNER_PRIVATE_KEY as `0x${string}`);
 
     const client = createWalletClient({
-    account,
-    chain: sepolia,
-    transport: http(),
+        account,
+        chain: sepolia,
+        transport: http(),
     });
-    const signature = await client.signTypedData({
-        domain, types, primaryType: 'MintRequest', message: { to, visitorName, expiration },
+
+    return client.signTypedData({
+        domain,
+        types,
+        primaryType: 'MintRequest',
+        message: { to, visitorName, expiration },
     });
-    return signature;
 }

@@ -1,5 +1,9 @@
+using System;
+using System.Collections;
+using System.Text;
 using TMPro;
 using UnityEngine;
+using UnityEngine.Networking;
 using UnityEngine.UI;
 using MuseuVerse.Interaction;
 using MuseuVerse.Player;
@@ -8,146 +12,108 @@ using MuseuVerse.Progress;
 namespace MuseuVerse.UI
 {
     /// <summary>
-    /// Tela final (certificado de visita). Aberta pelo ProgressManager via UnityEvent
-    /// quando todas as pecas sao visitadas — sem referencia de codigo entre os dois.
-    /// Mostra o nome do visitante (GameState), a contagem de pecas e oferece o claim
-    /// do NFT por uma URL configurada no inspector. Pausa player e raycaster enquanto
-    /// aberta, igual aos demais modais.
-    /// Roda depois do FirstPersonController (execution order) para que o ESC que fecha
-    /// a tela nao seja reprocessado pelo controle do jogador no mesmo frame.
+    /// Tela final do certificado de visita.
+    /// Quando o jogador clica em "Resgatar NFT", chama o backend para obter um
+    /// visitToken e depois abre o site de mint com visitToken + visitorName na URL.
     /// </summary>
     [DefaultExecutionOrder(100)]
     public class TelaFinal : MonoBehaviour
     {
+        // ── Referências de gameplay ──────────────────────────────────────────
         [Header("Referencias de gameplay")]
-        [SerializeField, Tooltip("Controle do Player. Se vazio, busca via FindObjectOfType.")]
-        private FirstPersonController playerController;
+        [SerializeField] private FirstPersonController playerController;
+        [SerializeField] private InteractionRaycaster  raycaster;
 
-        [SerializeField, Tooltip("Raycaster do Player. Se vazio, busca via FindObjectOfType.")]
-        private InteractionRaycaster raycaster;
-
+        // ── Elementos da tela ────────────────────────────────────────────────
         [Header("Elementos da tela")]
-        [SerializeField, Tooltip("Raiz visual da tela, ativada/desativada ao abrir/fechar")]
-        private GameObject painelRaiz;
+        [SerializeField] private GameObject painelRaiz;
+        [SerializeField] private TMP_Text   textoNome;
+        [SerializeField] private TMP_Text   textoContagem;
 
-        [SerializeField, Tooltip("Texto que recebe o nome do visitante vindo do GameState")]
-        private TMP_Text textoNome;
-
-        [SerializeField, Tooltip("Texto da contagem de pecas, ex: '4/4 pecas visitadas'")]
-        private TMP_Text textoContagem;
-
-        [Header("Claim NFT")]
-        [SerializeField, Tooltip("Botao que abre o link de claim do NFT")]
-        private Button botaoClaim;
-
-        [SerializeField, Tooltip("URL de claim do NFT. Preenchida quando o dev de blockchain entregar o link.")]
-        private string urlClaim = string.Empty;
-
+        // ── Botões ───────────────────────────────────────────────────────────
         [Header("Botoes")]
-        [SerializeField] private Button botaoFechar;
+        [SerializeField] private Button    botaoClaim;
+        [SerializeField] private Button    botaoFechar;
+        [SerializeField] private TMP_Text  textoBotaoClaim; // label do botão de claim
+
+        // ── Feedback ao jogador ──────────────────────────────────────────────
+        [Header("Feedback")]
+        [SerializeField, Tooltip("Texto de status exibido enquanto chama o backend.")]
+        private TMP_Text textoStatus;
+
+        // ── Configuração Web3 ────────────────────────────────────────────────
+        [Header("Configuracao Web3")]
+        [SerializeField, Tooltip("URL base do backend. Ex: https://seu-backend.railway.app")]
+        private string backendUrl = "https://SEU-BACKEND.com";
+
+        [SerializeField, Tooltip("URL base do site de mint. Ex: https://museu-verse.netlify.app")]
+        private string mintSiteUrl = "https://museu-verse.netlify.app";
+
+        [SerializeField,
+         Tooltip("UNITY_API_KEY configurada no backend (.env). Mantenha em segredo — não commite a chave real.")]
+        private string unityApiKey = "museuverse_unity_apikey_bemsecreto";
 
         [Header("Configuracao")]
-        [SerializeField, Tooltip("Total de pecas do acervo, usado no texto de contagem")]
-        private int totalPecas = 4;
+        [SerializeField] private int totalPecas = 4;
 
+        // ── Estado interno ───────────────────────────────────────────────────
         private bool estaAberta;
+        private bool chamandoBackend;
 
         public bool EstaAberta => estaAberta;
 
+        // ── Unity lifecycle ──────────────────────────────────────────────────
+
         private void Awake()
         {
-            if (playerController == null)
-            {
-                playerController = FindObjectOfType<FirstPersonController>();
-            }
-            if (raycaster == null)
-            {
-                raycaster = FindObjectOfType<InteractionRaycaster>();
-            }
+            playerController ??= FindObjectOfType<FirstPersonController>();
+            raycaster        ??= FindObjectOfType<InteractionRaycaster>();
         }
 
         private void OnEnable()
         {
-            if (botaoClaim != null)
-            {
-                botaoClaim.onClick.AddListener(AoClicarClaim);
-            }
-            if (botaoFechar != null)
-            {
-                botaoFechar.onClick.AddListener(Fechar);
-            }
+            botaoClaim?.onClick.AddListener(AoClicarClaim);
+            botaoFechar?.onClick.AddListener(Fechar);
         }
 
         private void OnDisable()
         {
-            if (botaoClaim != null)
-            {
-                botaoClaim.onClick.RemoveListener(AoClicarClaim);
-            }
-            if (botaoFechar != null)
-            {
-                botaoFechar.onClick.RemoveListener(Fechar);
-            }
+            botaoClaim?.onClick.RemoveListener(AoClicarClaim);
+            botaoFechar?.onClick.RemoveListener(Fechar);
         }
 
         private void Start()
         {
-            if (painelRaiz != null)
-            {
-                painelRaiz.SetActive(false);
-            }
+            painelRaiz?.SetActive(false);
         }
 
         private void Update()
         {
-            if (!estaAberta)
-            {
-                return;
-            }
-
-            if (Input.GetKeyDown(KeyCode.Escape))
-            {
-                Fechar();
-            }
+            if (!estaAberta) return;
+            if (Input.GetKeyDown(KeyCode.Escape)) Fechar();
         }
 
+        // ── API pública ──────────────────────────────────────────────────────
+
         /// <summary>
-        /// Abre o certificado, preenche nome e contagem e pausa o gameplay.
-        /// Metodo publico para o ProgressManager chamar via UnityEvent no inspector.
+        /// Abre o certificado. Chamado pelo ProgressManager via UnityEvent no inspector.
         /// </summary>
         public void Abrir()
         {
             estaAberta = true;
+            painelRaiz?.SetActive(true);
 
-            if (painelRaiz != null)
-            {
-                painelRaiz.SetActive(true);
-            }
+            string nome = GameState.Instance.PlayerName;
+            if (string.IsNullOrWhiteSpace(nome)) nome = "Visitante";
 
-            if (textoNome != null)
-            {
-                string nome = GameState.Instance.PlayerName;
-                if (string.IsNullOrWhiteSpace(nome))
-                {
-                    nome = "Visitante";
-                }
-                textoNome.text = nome;
-            }
+            if (textoNome     != null) textoNome.text     = nome;
+            if (textoContagem != null) textoContagem.text = $"{totalPecas}/{totalPecas} peças visitadas";
 
-            if (textoContagem != null)
-            {
-                textoContagem.text = $"{totalPecas}/{totalPecas} peças visitadas";
-            }
+            SetStatus(string.Empty);
+            SetBotaoClaimInterativo(true);
 
-            // SetInputEnabled(false) tambem libera o cursor para clicar na UI.
-            if (playerController != null)
-            {
-                playerController.SetInputEnabled(false);
-            }
-            if (raycaster != null)
-            {
-                raycaster.SetInputEnabled(false);
-            }
+            playerController?.SetInputEnabled(false);
+            raycaster?.SetInputEnabled(false);
         }
 
         /// <summary>
@@ -156,32 +122,112 @@ namespace MuseuVerse.UI
         public void Fechar()
         {
             estaAberta = false;
-
-            if (painelRaiz != null)
-            {
-                painelRaiz.SetActive(false);
-            }
-
-            // SetInputEnabled(true) volta a travar o cursor para o modo de jogo.
-            if (playerController != null)
-            {
-                playerController.SetInputEnabled(true);
-            }
-            if (raycaster != null)
-            {
-                raycaster.SetInputEnabled(true);
-            }
+            painelRaiz?.SetActive(false);
+            playerController?.SetInputEnabled(true);
+            raycaster?.SetInputEnabled(true);
         }
+
+        // ── Claim ────────────────────────────────────────────────────────────
 
         private void AoClicarClaim()
         {
-            if (string.IsNullOrWhiteSpace(urlClaim))
+            if (chamandoBackend) return;
+            StartCoroutine(RotinaClaim());
+        }
+
+        private IEnumerator RotinaClaim()
+        {
+            chamandoBackend = true;
+            SetBotaoClaimInterativo(false);
+            SetStatus("Gerando certificado…");
+
+            string nome = GameState.Instance.PlayerName;
+            if (string.IsNullOrWhiteSpace(nome)) nome = "Visitante";
+
+            // ── 1. Chamar o backend para obter o visitToken ──────────────────
+            string endpoint = backendUrl.TrimEnd('/') + "/api/visit-complete";
+            string corpo    = $"{{\"visitorName\":\"{EscapeJson(nome)}\"}}";
+
+            using var req = new UnityWebRequest(endpoint, "POST");
+            req.uploadHandler   = new UploadHandlerRaw(Encoding.UTF8.GetBytes(corpo));
+            req.downloadHandler = new DownloadHandlerBuffer();
+            req.SetRequestHeader("Content-Type", "application/json");
+            req.SetRequestHeader("x-api-key", unityApiKey);
+
+            yield return req.SendWebRequest();
+
+            if (req.result != UnityWebRequest.Result.Success)
             {
-                Debug.LogWarning("[TelaFinal] URL de claim do NFT ainda nao configurada no inspector.", this);
-                return;
+                Debug.LogError($"[TelaFinal] Erro ao chamar backend: {req.error} | {req.downloadHandler.text}");
+                SetStatus("Erro ao conectar ao servidor. Tente novamente.");
+                SetBotaoClaimInterativo(true);
+                chamandoBackend = false;
+                yield break;
             }
 
-            Application.OpenURL(urlClaim);
+            // ── 2. Parsear resposta { "visitToken": "..." } ──────────────────
+            string visitToken = ExtrairCampoJson(req.downloadHandler.text, "visitToken");
+            if (string.IsNullOrEmpty(visitToken))
+            {
+                Debug.LogError($"[TelaFinal] visitToken ausente na resposta: {req.downloadHandler.text}");
+                SetStatus("Resposta inesperada do servidor. Tente novamente.");
+                SetBotaoClaimInterativo(true);
+                chamandoBackend = false;
+                yield break;
+            }
+
+            // ── 3. Montar URL e abrir o site de mint ────────────────────────
+            string url = mintSiteUrl.TrimEnd('/')
+                + "?visitToken=" + Uri.EscapeDataString(visitToken)
+                + "&visitorName=" + Uri.EscapeDataString(nome);
+
+            Debug.Log($"[TelaFinal] Abrindo mint: {url}");
+            Application.OpenURL(url);
+
+            SetStatus("Site de resgate aberto! Continue lá.");
+            // Não reabilita o botão — token é de uso único.
+            chamandoBackend = false;
         }
+
+        // ── Helpers ──────────────────────────────────────────────────────────
+
+        private void SetBotaoClaimInterativo(bool interativo)
+        {
+            if (botaoClaim == null) return;
+            botaoClaim.interactable = interativo;
+            if (textoBotaoClaim != null)
+                textoBotaoClaim.text = interativo ? "Resgatar NFT" : "Aguarde…";
+        }
+
+        private void SetStatus(string msg)
+        {
+            if (textoStatus != null) textoStatus.text = msg;
+        }
+
+        /// <summary>
+        /// Mini-parser JSON sem dependências externas.
+        /// Extrai o valor de string de um campo de nível raiz: { "campo": "valor" }
+        /// </summary>
+        private static string ExtrairCampoJson(string json, string campo)
+        {
+            string chave = $"\"{campo}\"";
+            int idx = json.IndexOf(chave, StringComparison.Ordinal);
+            if (idx < 0) return null;
+
+            int colon = json.IndexOf(':', idx + chave.Length);
+            if (colon < 0) return null;
+
+            int quote1 = json.IndexOf('"', colon + 1);
+            if (quote1 < 0) return null;
+
+            int quote2 = json.IndexOf('"', quote1 + 1);
+            if (quote2 < 0) return null;
+
+            return json.Substring(quote1 + 1, quote2 - quote1 - 1);
+        }
+
+        /// <summary>Escapa aspas e barras para inserir em JSON manual.</summary>
+        private static string EscapeJson(string s) =>
+            s.Replace("\\", "\\\\").Replace("\"", "\\\"");
     }
 }
