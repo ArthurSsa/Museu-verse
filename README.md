@@ -71,7 +71,7 @@ Ao concluir a visita, o jogador recebe um certificado resgatável como NFT na **
 - ✅ **Interação básica** — a tecla **E** abre os painéis curatoriais das peças
 - ✅ **Fluxo funcional** — boas-vindas → exploração → certificado (4/4)
 - ✅ **README funcional** — este documento
-- ⬜ **Vídeo-pitch** — _(adicionar link do YouTube)_
+- ✅ **Vídeo-pitch** — [_(adicionar link do YouTube)_](https://youtu.be/RwitvMrYLrI) [Gameplay](https://youtu.be/UR2DNKXBv6Y)
 
 ## Equipe
 
